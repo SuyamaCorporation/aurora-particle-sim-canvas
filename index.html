@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Magnetic Field Aurora Particle Simulator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen p-4">
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-xl font-bold text-center mb-2 text-blue-400">Aurora Particle Simulator</h1>
+  <p class="text-center text-gray-500 text-xs mb-4">Charged particles guided by Earth's dipole magnetic field</p>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+    <div>
+      <label for="particleCount" class="block text-xs text-gray-400 mb-1">Particles: <span id="pcVal">100</span></label>
+      <input type="range" id="particleCount" min="20" max="300" value="100" class="w-full accent-blue-500">
+    </div>
+    <div>
+      <label for="speed" class="block text-xs text-gray-400 mb-1">Speed: <span id="spVal">1.0</span></label>
+      <input type="range" id="speed" min="0.1" max="3" step="0.1" value="1.0" class="w-full accent-blue-500">
+    </div>
+    <div>
+      <label for="hue" class="block text-xs text-gray-400 mb-1">Color Hue: <span id="hueVal">160</span></label>
+      <input type="range" id="hue" min="0" max="360" value="160" class="w-full accent-blue-500">
+    </div>
+    <div class="flex items-end">
+      <button onclick="reset()" class="w-full bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded text-sm">Reset</button>
+    </div>
+  </div>
+
+  <canvas id="canvas" class="w-full rounded border border-gray-800" aria-label="Aurora particle simulation" style="background:#000008"></canvas>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+let particles = [];
+let animId;
+let baseHue = 160;
+let speedMult = 1.0;
+
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  W = canvas.width = rect.width || 800;
+  H = canvas.height = Math.round(W * 0.56);
+}
+
+class Particle {
+  constructor() { this.reset(); }
+  reset() {
+    // Start near equator with random longitude
+    const angle = Math.random() * Math.PI * 2;
+    const r = W * 0.18 + Math.random() * W * 0.05;
+    this.x = W/2 + r * Math.cos(angle);
+    this.y = H/2 + r * Math.sin(angle) * 0.5;
+    this.vx = (Math.random() - 0.5) * 1.5;
+    this.vy = (Math.random() - 0.5) * 1.5 - 0.5;
+    this.age = 0;
+    this.maxAge = 120 + Math.random() * 180;
+    this.trail = [];
+    this.hueOffset = (Math.random() - 0.5) * 60;
+    this.charge = Math.random() > 0.5 ? 1 : -1;
+  }
+
+  update() {
+    // Dipole magnetic field force (simplified: B field guides particles to poles)
+    const dx = this.x - W/2;
+    const dy = (this.y - H/2) * 2; // Aspect correction
+    const dist = Math.sqrt(dx*dx + dy*dy) + 0.01;
+
+    // Magnetic force: F = qv × B (simplified 2D)
+    // B field lines: toward north/south poles
+    const bx = -dy / (dist * dist * 0.002);
+    const by = dx / (dist * dist * 0.002);
+    const force = 0.003;
+
+    // Lorentz force perpendicular to velocity
+    const lx = this.charge * (this.vy * bx - 0) * force;
+    const ly = this.charge * (0 - this.vx * bx) * force;
+
+    // Gravity towards poles (attraction to poles)
+    const poleNY = H * 0.06;
+    const poleSY = H * 0.94;
+    const poleCX = W/2 + dx * 0.1;
+
+    const dnx = poleCX - this.x, dny = poleNY - this.y;
+    const dsx = poleCX - this.x, dsy = poleSY - this.y;
+    const dn = Math.sqrt(dnx*dnx + dny*dny) + 1;
+    const ds = Math.sqrt(dsx*dsx + dsy*dsy) + 1;
+
+    const gravStrength = 0.015 / (dist/W + 0.3);
+
+    this.vx += lx + (dnx/dn + dsx/ds) * gravStrength;
+    this.vy += ly + (dny/dn + dsy/ds) * gravStrength;
+
+    // Damping
+    this.vx *= 0.99;
+    this.vy *= 0.99;
+
+    // Speed limit
+    const speed = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+    if (speed > 4) { this.vx = this.vx/speed*4; this.vy = this.vy/speed*4; }
+
+    this.trail.push({ x: this.x, y: this.y });
+    if (this.trail.length > 20) this.trail.shift();
+
+    this.x += this.vx * speedMult;
+    this.y += this.vy * speedMult;
+    this.age++;
+
+    if (this.age > this.maxAge || this.x < 0 || this.x > W || this.y < 0 || this.y > H) {
+      this.reset();
+    }
+  }
+
+  draw() {
+    if (this.trail.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(this.trail[0].x, this.trail[0].y);
+    for (let i = 1; i < this.trail.length; i++) {
+      ctx.lineTo(this.trail[i].x, this.trail[i].y);
+    }
+    const lifeRatio = 1 - this.age / this.maxAge;
+    const h = (baseHue + this.hueOffset + 360) % 360;
+    ctx.strokeStyle = `hsla(${h},100%,70%,${lifeRatio * 0.8})`;
+    ctx.lineWidth = 1.5;
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = `hsl(${h},100%,60%)`;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawEarth() {
+  // Earth
+  const grad = ctx.createRadialGradient(W/2, H/2, W*0.12, W/2, H/2, W*0.16);
+  grad.addColorStop(0, '#1a4a7a');
+  grad.addColorStop(0.6, '#1e3a5f');
+  grad.addColorStop(1, '#0d1f3a');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(W/2, H/2, W*0.155, W*0.155*0.6, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  // Equator line
+  ctx.strokeStyle = 'rgba(100,150,200,0.2)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.ellipse(W/2, H/2, W*0.155, 2, 0, 0, Math.PI*2);
+  ctx.stroke();
+
+  // Pole indicators
+  ctx.fillStyle = 'rgba(150,220,255,0.4)';
+  ctx.beginPath(); ctx.arc(W/2, H*0.06, 8, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(W/2, H*0.94, 8, 0, Math.PI*2); ctx.fill();
+}
+
+function drawMagneticFieldLines() {
+  ctx.strokeStyle = 'rgba(60,100,180,0.07)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const r = W * 0.16;
+    const sx = W/2 + r * Math.cos(angle);
+    const sy = H/2 + r * Math.sin(angle) * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.quadraticCurveTo(W/2 + Math.cos(angle) * W*0.35, H*0.5, W/2, angle < Math.PI ? H*0.06 : H*0.94);
+    ctx.stroke();
+  }
+}
+
+function animate() {
+  ctx.fillStyle = 'rgba(0,0,8,0.15)';
+  ctx.fillRect(0, 0, W, H);
+
+  drawMagneticFieldLines();
+  drawEarth();
+
+  particles.forEach(p => { p.update(); p.draw(); });
+  animId = requestAnimationFrame(animate);
+}
+
+function reset() {
+  const n = parseInt(document.getElementById('particleCount').value);
+  particles = Array.from({length: n}, () => new Particle());
+}
+
+document.getElementById('particleCount').oninput = e => {
+  document.getElementById('pcVal').textContent = e.target.value;
+  reset();
+};
+document.getElementById('speed').oninput = e => {
+  document.getElementById('spVal').textContent = e.target.value;
+  speedMult = parseFloat(e.target.value);
+};
+document.getElementById('hue').oninput = e => {
+  document.getElementById('hueVal').textContent = e.target.value;
+  baseHue = parseInt(e.target.value);
+};
+
+window.addEventListener('resize', () => { resize(); reset(); });
+resize();
+reset();
+animate();
+</script>
+</body>
+</html>
